@@ -1,6 +1,7 @@
 """Tool-using Ollama agent and interactive CLI."""
 
 import json
+import re
 
 from app.prompts import SYSTEM_INSTRUCTION
 from app.services.ollama import OllamaError, chat
@@ -8,6 +9,94 @@ from app.tools.financial_news import FinLensTools
 
 MAX_TOOL_ROUNDS = 12
 DAILY_BRIEFING_REQUEST = "Prepare today's financial news briefing for a beginner."
+BRIEFING_FIELDS = {
+    "events": {"key events", "what happened", "what happened?"},
+    "why": {"why", "why?"},
+    "learn": {"term to learn", "learn this"},
+    "care": {"why the connection matters", "why should i care"},
+    "sources": {"sources", "source"},
+}
+EMPTY_EXPLANATION_MARKERS = (
+    "not provided",
+    "not available",
+    "not specified",
+    "cannot be established",
+    "cannot determine",
+    "not enough information",
+    "no useful",
+    "no clear",
+    "not mentioned",
+    "source does not explain",
+    "sources do not explain",
+    "no reason is given",
+    "unknown",
+    "n/a",
+)
+
+
+def _has_unlisted_source(response: str, tools: FinLensTools) -> bool:
+    """Check that a generated briefing only cites URLs from its fetched stories."""
+    allowed_urls = {story["url"] for story in tools.stories}
+    cited_urls = {
+        url.rstrip(".,;:!?)]}")
+        for url in re.findall(r"https?://[^\s<>\"]+", response)
+    }
+    return bool(cited_urls - allowed_urls)
+
+
+def _briefing_quality_issues(response: str, tools: FinLensTools) -> list[str]:
+    """Flag story cards missing useful explanations or a matching source URL."""
+    headings = list(re.finditer(r"(?m)^###\s+(.+?)\s*$", response))
+    if not headings:
+        # A plain no-eligible-stories response is a valid outcome of strict selection.
+        if re.search(r"(?i)no (?:stories|story|items) (?:met|qualified|were selected|were suitable)", response):
+            return []
+        return ["The briefing has no story sections, despite fetched stories being available."] if tools.stories else []
+
+    allowed_urls = {story["url"] for story in tools.stories}
+    issues: list[str] = []
+    labels = {label: key for key, names in BRIEFING_FIELDS.items() for label in names}
+    field_pattern = re.compile(r"^\s*\*\*(?P<label>[^*]+)\*\*:?[ \t]*(?P<inline>.*)$")
+
+    for index, heading in enumerate(headings, start=1):
+        end = headings[index].start() if index < len(headings) else len(response)
+        block = response[heading.end() : end]
+        lines = block.splitlines()
+        found: dict[str, list[str]] = {}
+        field_matches = []
+        for line_number, line in enumerate(lines):
+            match = field_pattern.match(line)
+            if not match:
+                continue
+            label = re.sub(r"\s+", " ", match.group("label").strip().rstrip(":").casefold())
+            if label in labels:
+                field_matches.append((line_number, labels[label], match.group("inline").strip()))
+
+        for position, (line_number, key, inline) in enumerate(field_matches):
+            field_end = field_matches[position + 1][0] if position + 1 < len(field_matches) else len(lines)
+            content = ([inline] if inline else []) + lines[line_number + 1 : field_end]
+            found[key] = [part.strip() for part in content if part.strip()]
+
+        missing = [name for name in ("events", "why", "learn", "care", "sources") if not found.get(name)]
+        if missing:
+            issues.append(f"Story {index} is missing: {', '.join(missing)}.")
+            continue
+
+        for key in ("events", "why", "learn", "care"):
+            value = re.sub(r"[*_`]", "", " ".join(found[key])).strip()
+            words = re.findall(r"\b[\w’'-]+\b", value)
+            if len(words) < 5 or any(marker in value.casefold() for marker in EMPTY_EXPLANATION_MARKERS):
+                issues.append(f"Story {index} has no useful, story-specific {key} explanation.")
+
+        source_text = " ".join(found["sources"])
+        urls = {
+            url.rstrip(".,;:!?)]}")
+            for url in re.findall(r"https?://[^\s<>\"]+", source_text)
+        }
+        if not urls or not (urls & allowed_urls):
+            issues.append(f"Story {index} has no source URL matching the fetched news list.")
+
+    return issues
 
 
 def answer(question: str, history: list[dict], tools: FinLensTools) -> str:
@@ -43,11 +132,36 @@ def generate_daily_briefing(
     tools: FinLensTools | None = None,
 ) -> str:
     """Generate the same proactive briefing used when the CLI starts."""
-    return answer(
+    conversation = history if history is not None else []
+    active_tools = tools if tools is not None else FinLensTools()
+    briefing = answer(
         DAILY_BRIEFING_REQUEST,
-        history if history is not None else [],
-        tools if tools is not None else FinLensTools(),
+        conversation,
+        active_tools,
     )
+    issues = _briefing_quality_issues(briefing, active_tools)
+    if _has_unlisted_source(briefing, active_tools) or issues:
+        briefing = answer(
+            "Revise the briefing you just produced using only the current fetched stories. "
+            "Remove every story that cannot meet all of the prompt's selection criteria. "
+            "Every retained story must have useful, specific Key events, Why?, Term to "
+            "learn, Why the connection matters, and at least one exact source URL from "
+            "the fetched list. Do not fill gaps with generic text or replace removed "
+            "stories with events from memory. Cause -> effect is optional. "
+            + (
+                "Problems to correct: " + " ".join(issues)
+                if issues
+                else "Remove any unlisted source URL."
+            ),
+            conversation,
+            active_tools,
+        )
+        if _has_unlisted_source(briefing, active_tools) or _briefing_quality_issues(briefing, active_tools):
+            return (
+                "No stories met FinLens's source and explanation requirements today. "
+                "I won't fill missing details with guesses or generic explanations."
+            )
+    return briefing
 
 
 def run_cli() -> None:

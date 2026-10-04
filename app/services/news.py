@@ -35,13 +35,22 @@ def _published_today(entry: dict, today: date) -> str | None:
     return published.isoformat() if published.date() == today else None
 
 
-def fetch_daily_news() -> list[dict[str, str]]:
-    """Return up to twelve stories dated today in the configured local timezone."""
+def fetch_daily_news(region: str | None = None) -> list[dict[str, str]]:
+    """Return up to twelve stories dated today, optionally limited by region."""
     stories: list[dict[str, str]] = []
     seen_urls: set[str] = set()
     today = _today()
 
-    for feed_url in settings.news_feeds:
+    target_region = None
+    if region:
+        target_region = "india" if region.strip().casefold() == "india" else "global"
+
+    feeds = (
+        feed for feed in settings.news_feeds
+        if target_region is None or feed.region.casefold() == target_region
+    )
+    for configured_feed in feeds:
+        feed_url = configured_feed.url
         try:
             response = requests.get(
                 feed_url,
@@ -71,6 +80,7 @@ def fetch_daily_news() -> list[dict[str, str]]:
                     "url": url,
                     "published_at": published_at,
                     "feed_url": feed_url,
+                    "region": configured_feed.region,
                 }
             )
 
@@ -150,5 +160,12 @@ def find_matching_stories(feed_urls: set[str]) -> list[dict[str, str]]:
         for entry in feed.entries:
             if not _published_today(entry, today):
                 continue
-            results.append({"title": entry.get("title", ""), "url": entry.get("link", ""), "source": feed.feed.get("title", urlparse(feed_url).netloc)})
+            results.append(
+                {
+                    "title": entry.get("title", ""),
+                    "summary": entry.get("summary", entry.get("description", "")),
+                    "url": entry.get("link", ""),
+                    "source": feed.feed.get("title", urlparse(feed_url).netloc),
+                }
+            )
     return results

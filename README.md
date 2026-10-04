@@ -33,7 +33,7 @@ app/
    python -m pip install -r requirements.txt
    ```
 
-3. Optionally copy `.env.example` to `.env` and change the model, Ollama URL, timezone, or RSS feed list. The defaults are `OLLAMA_MODEL=gemma4:cloud` and `OLLAMA_BASE_URL=http://localhost:11434`.
+3. Optionally copy `.env.example` to `.env` and change the model, Ollama URL, timezone, or RSS feed list. Feed entries use `region|URL` pairs (for example `india|https://example.com/feed.rss`); URL-only entries are still accepted and treated as `global`. The defaults are `OLLAMA_MODEL=gemma4:cloud` and `OLLAMA_BASE_URL=http://localhost:11434`.
 4. Start the CLI:
 
    ```powershell
