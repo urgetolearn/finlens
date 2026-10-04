@@ -10,10 +10,15 @@ class OllamaError(RuntimeError):
 
 
 def chat(messages: list[dict], tools: list[dict]) -> dict:
+    headers = {}
+    if settings.ollama_api_key:
+        headers["Authorization"] = f"Bearer {settings.ollama_api_key}"
+
     try:
         response = requests.post(
             f"{settings.ollama_base_url}/api/chat",
             json={"model": settings.ollama_model, "messages": messages, "tools": tools, "stream": False},
+            headers=headers,
             timeout=120,
         )
         response.raise_for_status()

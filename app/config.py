@@ -52,6 +52,7 @@ def _news_feeds() -> tuple[NewsFeed, ...]:
 class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "gemma4:cloud")
+    ollama_api_key: str = os.getenv("OLLAMA_API_KEY", "")
     timezone: str = os.getenv("TIMEZONE", "Asia/Kolkata")
     news_feeds: tuple[NewsFeed, ...] = _news_feeds()
 
