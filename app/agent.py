@@ -3,7 +3,7 @@
 import json
 import re
 
-from app.prompts import SELECTED_STORY_INSTRUCTION, SYSTEM_INSTRUCTION
+from app.prompts import SELECTED_STORY_INSTRUCTION, STORY_TIME_INSTRUCTION, SYSTEM_INSTRUCTION
 from app.services.ollama import OllamaError, chat
 from app.tools.financial_news import FinLensTools
 
@@ -137,6 +137,20 @@ def answer(
             messages.append({"role": "tool", "tool_name": name, "content": result})
 
     raise OllamaError("The model requested too many tool steps. Try asking a more focused question.")
+
+
+def generate_story_time(history: list[dict], tools: FinLensTools) -> str:
+    """Generate a story analogy without changing the selected-story chat history."""
+    story_time_history = list(history)
+    return answer(
+        "Create Story Time for the selected story using its source and context already "
+        "in this conversation. Choose the main financial concept that benefits from "
+        "an analogy. Explain that concept through one simple everyday mini-story; do "
+        "not summarize the article again.",
+        story_time_history,
+        tools,
+        system_instruction=STORY_TIME_INSTRUCTION,
+    )
 
 
 def generate_daily_briefing(

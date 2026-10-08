@@ -5,7 +5,7 @@ from html import unescape
 
 import streamlit as st
 
-from app.agent import answer
+from app.agent import answer, generate_story_time
 from app.prompts import SELECTED_STORY_INSTRUCTION
 from app.services.news import fetch_daily_news
 from app.services.ollama import OllamaError
@@ -155,14 +155,76 @@ else:
             st.session_state.pop(error_key, None)
             st.rerun()
 
-    first_user_message = True
-    for message in history:
+    initial_user_index = next(
+        (index for index, message in enumerate(history) if message.get("role") == "user"),
+        None,
+    )
+    follow_up_start_index = (
+        next(
+            (
+                index
+                for index in range(initial_user_index + 1, len(history))
+                if history[index].get("role") == "user"
+            ),
+            len(history),
+        )
+        if initial_user_index is not None
+        else len(history)
+    )
+    initial_answer_index = (
+        next(
+            (
+                index
+                for index in range(follow_up_start_index - 1, initial_user_index, -1)
+                if index != st.session_state.get("finlens_story_time_context_indices", {}).get(story_url)
+                and history[index].get("role") == "assistant"
+                and isinstance(history[index].get("content"), str)
+                and history[index]["content"].strip()
+            ),
+            None,
+        )
+        if initial_user_index is not None
+        else None
+    )
+    if initial_answer_index is not None:
+        with st.chat_message("assistant"):
+            st.markdown(history[initial_answer_index]["content"])
+
+    story_times = st.session_state.setdefault("finlens_story_times", {})
+    story_time_errors = st.session_state.setdefault("finlens_story_time_errors", {})
+    story_time_context_indices = st.session_state.setdefault(
+        "finlens_story_time_context_indices", {}
+    )
+    if initial_answer_index is not None:
+        story_time_generated = False
+        if story_url not in story_times and st.button(
+            "📖 Story Time", key=f"story-time-{selected_story.get('id', 'selected')}"
+        ):
+            try:
+                with st.spinner("Finding an everyday way to picture this concept..."):
+                    story_times[story_url] = generate_story_time(history, tools)
+                story_time_context_indices[story_url] = len(history)
+                history.append({"role": "assistant", "content": story_times[story_url]})
+                story_time_errors.pop(story_url, None)
+                story_time_generated = True
+            except OllamaError as exc:
+                story_time_errors[story_url] = str(exc)
+        if story_time_generated:
+            st.rerun()
+
+        if story_url in story_times:
+            with st.container(border=True):
+                st.markdown("### 📖 Story Time")
+                st.markdown(story_times[story_url])
+        if story_url in story_time_errors:
+            st.error(story_time_errors[story_url])
+
+    story_time_context_index = story_time_context_indices.get(story_url)
+    for index, message in enumerate(history[follow_up_start_index:], start=follow_up_start_index):
+        if index == story_time_context_index:
+            continue
         role = message.get("role")
         content = message.get("content")
-        if role == "user" and first_user_message:
-            # The initial story context is for the agent; don't display it as user chat.
-            first_user_message = False
-            continue
         if role not in {"user", "assistant"} or not isinstance(content, str) or not content.strip():
             continue
         with st.chat_message(role):
