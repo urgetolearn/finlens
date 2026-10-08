@@ -21,16 +21,16 @@ CONCEPTS = {
 
 
 class FinLensTools:
-    def __init__(self, region: str | None = None) -> None:
-        self.stories: list[dict[str, str]] = []
-        self.region = region
+    def __init__(self, stories: list[dict[str, str]] | None = None) -> None:
+        self.stories = list(stories) if stories is not None else []
+        self._news_loaded = stories is not None
         self.related_stories: dict[str, dict[str, str]] = {}
         self.retrieved_related_urls: set[str] = set()
 
     @property
     def definitions(self) -> list[dict]:
         return [
-            {"type": "function", "function": {"name": "get_daily_financial_news", "description": "Fetch today's financial news from configured public RSS feeds. Set region to India for India-tagged feeds; other regions use global-tagged feeds. Call this when the user asks what is happening today or needs current news.", "parameters": {"type": "object", "properties": {"region": {"type": "string", "enum": ["India", "United States", "Europe", "Asia-Pacific", "Global"], "description": "Requested region; India uses India feeds, other selections use global feeds."}}, "required": []}}},
+            {"type": "function", "function": {"name": "get_daily_financial_news", "description": "Fetch today's India-focused financial news from the configured public RSS feeds. Call this when the user asks what is happening today or needs current India news.", "parameters": {"type": "object", "properties": {}, "required": []}}},
             {"type": "function", "function": {"name": "read_story_source", "description": "Retrieve readable text from one story's original source page when more detail is needed. Call get_daily_financial_news first. This makes a single on-demand request.", "parameters": {"type": "object", "properties": {"story_id": {"type": "string", "description": "ID returned by get_daily_financial_news"}}, "required": ["story_id"]}}},
             {"type": "function", "function": {"name": "check_other_sources", "description": "When the selected story's source is too thin, find possible same-event coverage in other configured RSS feeds. Returns candidate titles, summaries, URLs, and IDs. A match is not proof it is the same event; compare the reported action, entities, and timing before reading it.", "parameters": {"type": "object", "properties": {"story_id": {"type": "string", "description": "ID returned by get_daily_financial_news"}}, "required": ["story_id"]}}},
             {"type": "function", "function": {"name": "read_related_source", "description": "Retrieve article text from one candidate returned by check_other_sources, after determining its headline and summary may describe the same event. Do not use it for a separate event.", "parameters": {"type": "object", "properties": {"related_story_id": {"type": "string", "description": "Candidate ID returned by check_other_sources"}}, "required": ["related_story_id"]}}},
@@ -51,14 +51,16 @@ class FinLensTools:
             )
 
         if name == "get_daily_financial_news":
-            self.stories = fetch_daily_news(self.region or arguments.get("region"))
+            if not self._news_loaded:
+                self.stories = fetch_daily_news()
+                self._news_loaded = True
             self.related_stories.clear()
             self.retrieved_related_urls.clear()
             if not self.stories:
                 return "No stories dated today were found in the configured RSS feeds. Be transparent; do not invent current news."
             return "Stories dated today (local timezone):\n" + "\n".join(
                 f"[{s['id']}] {s['title']} — {s['source']} ({s['published_at']})\n"
-                f"RSS description: {s['summary'][:600]}\nSource URL: {s['url']}"
+                f"RSS description: {(s.get('summary') or '')[:600]}\nSource URL: {s['url']}"
                 for s in self.stories
             )
 

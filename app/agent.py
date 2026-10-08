@@ -3,7 +3,7 @@
 import json
 import re
 
-from app.prompts import SYSTEM_INSTRUCTION
+from app.prompts import SELECTED_STORY_INSTRUCTION, SYSTEM_INSTRUCTION
 from app.services.ollama import OllamaError, chat
 from app.tools.financial_news import FinLensTools
 
@@ -77,12 +77,14 @@ def _briefing_quality_issues(response: str, tools: FinLensTools) -> list[str]:
             content = ([inline] if inline else []) + lines[line_number + 1 : field_end]
             found[key] = [part.strip() for part in content if part.strip()]
 
-        missing = [name for name in ("events", "why", "learn", "care", "sources") if not found.get(name)]
+        missing = [name for name in ("events", "sources") if not found.get(name)]
         if missing:
             issues.append(f"Story {index} is missing: {', '.join(missing)}.")
             continue
 
         for key in ("events", "why", "learn", "care"):
+            if not found.get(key):
+                continue
             value = re.sub(r"[*_`]", "", " ".join(found[key])).strip()
             words = re.findall(r"\b[\w’'-]+\b", value)
             if len(words) < 5 or any(marker in value.casefold() for marker in EMPTY_EXPLANATION_MARKERS):
@@ -99,18 +101,28 @@ def _briefing_quality_issues(response: str, tools: FinLensTools) -> list[str]:
     return issues
 
 
-def answer(question: str, history: list[dict], tools: FinLensTools) -> str:
+def answer(
+    question: str,
+    history: list[dict],
+    tools: FinLensTools,
+    system_instruction: str = SYSTEM_INSTRUCTION,
+) -> str:
     """Let the model decide which tools are useful, then return its response."""
     history.append({"role": "user", "content": question})
-    messages = [{"role": "system", "content": SYSTEM_INSTRUCTION}, *history]
+    messages = [{"role": "system", "content": system_instruction}, *history]
 
     for _ in range(MAX_TOOL_ROUNDS):
-        reply = chat(messages, tools.definitions)
-        messages.append(reply)
+        reply = dict(chat(messages, tools.definitions))
+        if not isinstance(reply.get("content"), str):
+            reply["content"] = ""
         calls = reply.get("tool_calls", [])
         if not calls:
+            reply["content"] = reply["content"].strip() or "I couldn't produce an answer just now."
+            messages.append(reply)
             history[:] = messages[1:]
-            return reply.get("content", "I couldn't produce an answer just now.")
+            return reply["content"]
+
+        messages.append(reply)
 
         for call in calls:
             function = call.get("function", {})
@@ -144,9 +156,10 @@ def generate_daily_briefing(
         briefing = answer(
             "Revise the briefing you just produced using only the current fetched stories. "
             "Remove every story that cannot meet all of the prompt's selection criteria. "
-            "Every retained story must have useful, specific Key events, Why?, Term to "
-            "learn, Why the connection matters, and at least one exact source URL from "
-            "the fetched list. Do not fill gaps with generic text or replace removed "
+            "Every retained story must have useful, specific Key events and at least "
+            "one exact source URL from the fetched list. Include Why?, a term, or an "
+            "everyday connection only when useful and supported; do not force sections. "
+            "Do not fill gaps with generic text or replace removed "
             "stories with events from memory. Cause -> effect is optional. "
             + (
                 "Problems to correct: " + " ".join(issues)

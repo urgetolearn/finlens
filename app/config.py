@@ -11,21 +11,15 @@ load_dotenv()
 @dataclass(frozen=True)
 class NewsFeed:
     url: str
-    region: str
 
 
 DEFAULT_NEWS_FEEDS = (
-    "global|https://feeds.bbci.co.uk/news/business/rss.xml",
-    "global|https://www.theguardian.com/business/rss",
-    "global|https://www.bloomberg.com/feeds/business/news.rss",
-    "global|https://www.bloomberg.com/feeds/economics/news.rss",
-    "global|https://www.bloomberg.com/feeds/markets/news.rss",
-    "india|https://www.thehindubusinessline.com/markets/feeder/default.rss",
-    "india|https://www.thehindubusinessline.com/money-and-banking/feeder/default.rss",
-    "india|https://www.business-standard.com/rss/finance-103.rss",
-    "india|https://www.business-standard.com/rss/economy-102.rss",
-    "india|https://www.business-standard.com/rss/markets-106.rss",
-    "india|https://www.business-standard.com/rss/industry/banking-21703.rss",
+    "https://www.thehindubusinessline.com/markets/feeder/default.rss",
+    "https://www.thehindubusinessline.com/money-and-banking/feeder/default.rss",
+    "https://www.business-standard.com/rss/finance-103.rss",
+    "https://www.business-standard.com/rss/economy-102.rss",
+    "https://www.business-standard.com/rss/markets-106.rss",
+    "https://www.business-standard.com/rss/industry/banking-21703.rss",
 )
 
 
@@ -39,12 +33,14 @@ def _news_feeds() -> tuple[NewsFeed, ...]:
             continue
         if "|" in value:
             region, url = value.split("|", 1)
+            if region.strip().casefold() != "india":
+                continue
         else:
-            # Preserve compatibility with existing URL-only .env values.
-            region, url = "global", value
-        region, url = region.strip().lower(), url.strip()
+            # URL-only overrides are treated as India-focused sources.
+            url = value
+        url = url.strip()
         if url:
-            feeds.append(NewsFeed(url=url, region=region or "global"))
+            feeds.append(NewsFeed(url=url))
     return tuple(feeds)
 
 
